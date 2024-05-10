@@ -3,13 +3,26 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"log"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/L-PDufour/chirpy/internal/database"
 )
+
+type Chirp struct {
+	Id   int    `json:"id"`
+	Body string `json:"body"`
+}
+
+type User struct {
+	Id    int    `json:"id"`
+	Email string `json:"email"`
+}
 
 func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +108,44 @@ func (cfg *ApiConfig) handlerPostChirps(w http.ResponseWriter, r *http.Request) 
 	w.Write(dat)
 }
 
+func (cfg *ApiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	defer r.Body.Close()
+
+	var params Parameters
+	if err := decoder.Decode(&params); err != nil {
+		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
+		return
+	}
+
+	if params.Email == "" {
+		http.Error(w, "Email is required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := cfg.DB.CreateUser(params.Email)
+	if err != nil {
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	responseData := User{
+		Id:    user.Id,
+		Email: user.Email,
+	}
+
+	jsonData, err := json.Marshal(responseData)
+	if err != nil {
+		http.Error(w, "Failed to marshal response data", http.StatusInternalServerError)
+		return
+	}
+
+	// Write response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	w.Write(jsonData)
+}
+
 func (cfg *ApiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	dbChirps, err := cfg.DB.GetChirps()
 	if err != nil {
@@ -123,7 +174,30 @@ func (cfg *ApiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	w.Write(dat)
 }
 
+func (cfg *ApiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
+	idString := r.PathValue("id")
+	idInt, err := strconv.Atoi(idString)
+	dbChirp, err := cfg.DB.GetChirp(idInt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dbChirp)
+}
+
 func main() {
+	debug := flag.Bool("debug", false, "Enable debug mode")
+	flag.Parse()
+	if *debug {
+		err := os.Remove("database.json")
+		if err != nil {
+			log.Fatalf("Error deleting database: %v", err)
+		}
+		log.Println("Database deleted successfully")
+		return
+	}
 	const filepathRoot = "."
 	const port = "8080"
 	db, err := database.NewDB("database.json")
@@ -141,7 +215,9 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", cfg.handlerFileServerRequest)
 	mux.HandleFunc("/api/reset", cfg.handlerFileServerRequestReset)
 	mux.HandleFunc("POST /api/chirps", cfg.handlerPostChirps)
+	mux.HandleFunc("POST /api/users", cfg.handlerPostUsers)
 	mux.HandleFunc("GET /api/chirps", cfg.handlerGetChirps)
+	mux.HandleFunc("GET /api/chirps/{id}", cfg.handlerGetChirp)
 	corsMux := middlewareCors(mux)
 
 	srv := &http.Server{
