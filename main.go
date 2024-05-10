@@ -7,10 +7,17 @@ import (
 	"strings"
 )
 
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+type someStruct struct {
+	prop1 string
+	prop2 string
+}
+
+func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits++
+		cfg.fileserverHits++
 		next.ServeHTTP(w, r)
+		someStruct := someStruct{}
 	})
 }
 
@@ -33,10 +40,10 @@ func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(http.StatusText(http.StatusOK)))
 }
 
-func parseBody(s parameters) parameters {
+func parseBody(s Parameters) Parameters {
 	bannedWords := []string{"kerfuffle", "sharbert", "fornax"}
 
-	parseBodyParams := parameters{}
+	parseBodyParams := Parameters{}
 	parseBodyParams.Body = s.Body
 	parseBodySplit := strings.Fields(parseBodyParams.Body)
 	for i, words := range parseBodySplit {
@@ -51,9 +58,9 @@ func parseBody(s parameters) parameters {
 	return parseBodyParams
 }
 
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+func handlerPostChirps(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
+	params := Parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		errorResponse := ErrorResponse{Error: "Something went wrong"}
@@ -71,14 +78,20 @@ func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parseParams := parseBody(params)
-	validResponse := ValidResponse{parseParams.Body}
+	id := 0
+	validResponse := Chirp{
+		Id:   id,
+		Body: parseParams.Body,
+	}
+	id++
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(validResponse)
 
 }
 
 func main() {
-	cfg := &apiConfig{}
+	cfg := &ApiConfig{}
 	const filepathRoot = "."
 	const port = "8080"
 
@@ -88,8 +101,8 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	mux.HandleFunc("GET /admin/metrics", cfg.handlerFileServerRequest)
 	mux.HandleFunc("/api/reset", cfg.handlerFileServerRequestReset)
-	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
-	mux.HandleFunc("POST /api/chirps
+	mux.HandleFunc("POST /api/chirps", handlerPostChirps)
+	mux.HandleFunc("GET /api/chirps", handlerGethirps)
 	corsMux := middlewareCors(mux)
 
 	srv := &http.Server{

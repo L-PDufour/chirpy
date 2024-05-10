@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-func (cfg *apiConfig) handlerFileServerRequest(w http.ResponseWriter, r *http.Request) {
+func (cfg *ApiConfig) handlerFileServerRequest(w http.ResponseWriter, r *http.Request) {
 	cfg.mutex.Lock()
 	defer cfg.mutex.Unlock()
 
@@ -23,7 +23,7 @@ func (cfg *apiConfig) handlerFileServerRequest(w http.ResponseWriter, r *http.Re
 	`, cfg.fileserverHits)))
 }
 
-func (cfg *apiConfig) handlerFileServerRequestReset(w http.ResponseWriter, r *http.Request) {
+func (cfg *ApiConfig) handlerFileServerRequestReset(w http.ResponseWriter, r *http.Request) {
 	cfg.mutex.Lock()
 	defer cfg.mutex.Unlock()
 	cfg.fileserverHits = 0
