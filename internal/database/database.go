@@ -13,8 +13,9 @@ type Chirp struct {
 }
 
 type User struct {
-	Id    int    `json:"id"`
-	Email string `json:"email"`
+	Id       int    `json:"id"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 type DB struct {
@@ -61,7 +62,21 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 	return chirp, nil
 }
 
-func (db *DB) CreateUser(email string) (User, error) {
+func (db *DB) GetUserByEmail(email string) (User, error) {
+	dbStructure, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+
+	for _, user := range dbStructure.Users {
+		if user.Email == email {
+			return user, nil
+		}
+	}
+	return User{}, fmt.Errorf("No user found with this email")
+}
+
+func (db *DB) CreateUser(email string, password string) (User, error) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
 	dbStructure, err := db.loadDB()
@@ -70,9 +85,15 @@ func (db *DB) CreateUser(email string) (User, error) {
 	}
 
 	id := len(dbStructure.Users) + 1
+	for _, user := range dbStructure.Users {
+		if email == user.Email {
+			return User{}, err
+		}
+	}
 	user := User{
-		Id:    id,
-		Email: email,
+		Id:       id,
+		Email:    email,
+		Password: password,
 	}
 	dbStructure.Users[id] = user
 

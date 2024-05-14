@@ -15,6 +15,7 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 type Parameters struct {
-	Body  string `json:"body"`
-	Email string `json:"email"`
+	Body     string `json:"body"`
+	Password string `json:"password"`
+	Email    string `json:"email"`
 }

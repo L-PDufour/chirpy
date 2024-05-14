@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/L-PDufour/chirpy/internal/database"
 )
 
@@ -20,8 +22,9 @@ type Chirp struct {
 }
 
 type User struct {
-	Id    int    `json:"id"`
-	Email string `json:"email"`
+	Id       int    `json:"id"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -108,6 +111,43 @@ func (cfg *ApiConfig) handlerPostChirps(w http.ResponseWriter, r *http.Request) 
 	w.Write(dat)
 }
 
+func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	defer r.Body.Close()
+
+	var params Parameters
+	if err := decoder.Decode(&params); err != nil {
+		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
+		return
+	}
+
+	if params.Email == "" || params.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := cfg.DB.GetUserByEmail(params.Email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(params.Password))
+	if err != nil {
+		http.Error(w, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+
+	responseData := User{
+		Id:    user.Id,
+		Email: user.Email,
+	}
+
+	// Write response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(responseData)
+}
+
 func (cfg *ApiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -118,12 +158,18 @@ func (cfg *ApiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if params.Email == "" {
-		http.Error(w, "Email is required", http.StatusBadRequest)
+	if params.Email == "" || params.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
 		return
 	}
 
-	user, err := cfg.DB.CreateUser(params.Email)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(params.Password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	user, err := cfg.DB.CreateUser(params.Email, string(hashedPassword))
 	if err != nil {
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
@@ -216,6 +262,7 @@ func main() {
 	mux.HandleFunc("/api/reset", cfg.handlerFileServerRequestReset)
 	mux.HandleFunc("POST /api/chirps", cfg.handlerPostChirps)
 	mux.HandleFunc("POST /api/users", cfg.handlerPostUsers)
+	mux.HandleFunc("POST /api/login", cfg.handlerPostLogin)
 	mux.HandleFunc("GET /api/chirps", cfg.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{id}", cfg.handlerGetChirp)
 	corsMux := middlewareCors(mux)
