@@ -4,16 +4,19 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-
-	"golang.org/x/crypto/bcrypt"
+	"time"
 
 	"github.com/L-PDufour/chirpy/internal/database"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Chirp struct {
@@ -25,6 +28,7 @@ type User struct {
 	Id       int    `json:"id"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Token    string `json:"token"`
 }
 
 func (cfg *ApiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -111,11 +115,27 @@ func (cfg *ApiConfig) handlerPostChirps(w http.ResponseWriter, r *http.Request) 
 	w.Write(dat)
 }
 
+type PostLoginResponse struct {
+	ID    int    `json:"id"`
+	Email string `json:"email"`
+	Token string `json:"token"`
+}
+
 func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("post login")
+	type parameters struct {
+		Password         string `json:"password"`
+		Email            string `json:"email"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
+	}
+	type response struct {
+		User
+		Token string `json:"token"`
+	}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 
-	var params Parameters
+	params := parameters{}
 	if err := decoder.Decode(&params); err != nil {
 		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 		return
@@ -131,28 +151,53 @@ func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(params.Password))
+	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(params.Password))
 	if err != nil {
 		http.Error(w, "Invalid password", http.StatusUnauthorized)
 		return
 	}
 
-	responseData := User{
-		Id:    user.Id,
-		Email: user.Email,
+	defaultExpiration := 60 * 60 * 24
+	if params.ExpiresInSeconds == 0 {
+		params.ExpiresInSeconds = defaultExpiration
+	} else if params.ExpiresInSeconds > defaultExpiration {
+		params.ExpiresInSeconds = defaultExpiration
 	}
 
-	// Write response
+	token, _ := cfg.Makejwt(time.Duration(params.ExpiresInSeconds)*time.Second, user.Id)
+	responseData := PostLoginResponse{
+		ID:    user.Id,
+		Email: user.Email,
+		Token: token,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(responseData)
 }
 
+func (cfg *ApiConfig) Makejwt(expiresInSeconds time.Duration, Id int) (string, error) {
+
+	secretKey := []byte(cfg.jwtSecret)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Issuer:    "chirpy",
+		IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(time.Duration(expiresInSeconds))),
+		Subject:   fmt.Sprintf("%d", Id),
+	})
+	return token.SignedString(secretKey)
+}
+
 func (cfg *ApiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("post user")
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 
-	var params Parameters
+	params := parameters{}
 	if err := decoder.Decode(&params); err != nil {
 		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 		return
@@ -163,13 +208,7 @@ func (cfg *ApiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(params.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
-		return
-	}
-
-	user, err := cfg.DB.CreateUser(params.Email, string(hashedPassword))
+	user, err := cfg.DB.CreateUser(params.Email, params.Password)
 	if err != nil {
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
@@ -186,10 +225,13 @@ func (cfg *ApiConfig) handlerPostUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write(jsonData)
+	_, err = w.Write(jsonData)
+	if err != nil {
+		// Log the error but don't return it to the client
+		fmt.Println("Error writing response:", err)
+	}
 }
 
 func (cfg *ApiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +262,73 @@ func (cfg *ApiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	w.Write(dat)
 }
 
+type UpdateUserResponse struct {
+	ID string `json:"id"`
+}
+
+func (cfg *ApiConfig) handlerPutUsers(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("put user")
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	type response struct {
+		User
+	}
+	authHeader := r.Header.Get("Authorization")
+	authFields := strings.Fields(authHeader)
+	if len(authFields) != 2 || strings.ToLower(authFields[0]) != "bearer" {
+		return
+	}
+	token := authFields[1]
+	claimsStruct := jwt.RegisteredClaims{}
+	tokenParsed, err := jwt.ParseWithClaims(
+		token,
+		&claimsStruct,
+		func(token *jwt.Token) (interface{}, error) { return []byte(cfg.jwtSecret), nil })
+
+	if err != nil {
+		http.Error(w, "Invalid token: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	fmt.Println("tokenParsed")
+	userIdString, _ := tokenParsed.Claims.GetSubject()
+	decoder := json.NewDecoder(r.Body)
+	defer r.Body.Close()
+	params := parameters{}
+	if err := decoder.Decode(&params); err != nil {
+		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
+		return
+	}
+	if params.Email == "" || params.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	fmt.Println("Password")
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(params.Password), bcrypt.DefaultCost)
+	fmt.Println("AfterPassword")
+	fmt.Println("UpdateUser")
+	userIdInt, err := strconv.Atoi(userIdString)
+	user, _ := cfg.DB.UpdateUser(userIdInt, params.Email, string(hashedPassword))
+
+	resp := response{User{
+		Id:    user.Id,
+		Email: user.Email,
+	}}
+
+	fmt.Println("Marshall")
+	jsonResponse, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(w, "Failed to marshal JSON response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonResponse)
+}
+
 func (cfg *ApiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 	idString := r.PathValue("id")
 	idInt, err := strconv.Atoi(idString)
@@ -235,6 +344,9 @@ func (cfg *ApiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	debug := flag.Bool("debug", false, "Enable debug mode")
+	godotenv.Load()
+	jwtSecret := os.Getenv("JWT_SECRET")
+
 	flag.Parse()
 	if *debug {
 		err := os.Remove("database.json")
@@ -252,7 +364,8 @@ func main() {
 	}
 
 	cfg := &ApiConfig{
-		DB: db,
+		DB:        db,
+		jwtSecret: jwtSecret,
 	}
 	mux := http.NewServeMux()
 	fileServer := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))
@@ -262,6 +375,7 @@ func main() {
 	mux.HandleFunc("/api/reset", cfg.handlerFileServerRequestReset)
 	mux.HandleFunc("POST /api/chirps", cfg.handlerPostChirps)
 	mux.HandleFunc("POST /api/users", cfg.handlerPostUsers)
+	mux.HandleFunc("PUT /api/users", cfg.handlerPutUsers)
 	mux.HandleFunc("POST /api/login", cfg.handlerPostLogin)
 	mux.HandleFunc("GET /api/chirps", cfg.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{id}", cfg.handlerGetChirp)

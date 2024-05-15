@@ -2,9 +2,12 @@ package database
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Chirp struct {
@@ -13,9 +16,9 @@ type Chirp struct {
 }
 
 type User struct {
-	Id       int    `json:"id"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Id             int    `json:"id"`
+	Email          string `json:"email"`
+	HashedPassword string `json:"hashed_password"`
 }
 
 type DB struct {
@@ -75,6 +78,46 @@ func (db *DB) GetUserByEmail(email string) (User, error) {
 	}
 	return User{}, fmt.Errorf("No user found with this email")
 }
+func (db *DB) GetUserById(userId int) (User, error) {
+	dbStructure, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+
+	user, ok := dbStructure.Users[userId]
+	if !ok {
+		return User{}, errors.New("User does not exist")
+	}
+
+	return user, nil
+}
+
+func (db *DB) UpdateUser(userId int, email, hashedPassword string) (User, error) {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+
+	dbStructure, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+
+	user, ok := dbStructure.Users[userId]
+	if !ok {
+		return User{}, errors.New("User does not exist")
+	}
+
+	user.Email = email
+	user.HashedPassword = hashedPassword
+
+	dbStructure.Users[userId] = user
+
+	err = db.writeDB(dbStructure)
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
 
 func (db *DB) CreateUser(email string, password string) (User, error) {
 	db.mux.Lock()
@@ -90,10 +133,11 @@ func (db *DB) CreateUser(email string, password string) (User, error) {
 			return User{}, err
 		}
 	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	user := User{
-		Id:       id,
-		Email:    email,
-		Password: password,
+		Id:             id,
+		Email:          email,
+		HashedPassword: string(hashedPassword),
 	}
 	dbStructure.Users[id] = user
 
