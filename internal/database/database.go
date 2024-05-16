@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -19,6 +20,10 @@ type User struct {
 	Id             int    `json:"id"`
 	Email          string `json:"email"`
 	HashedPassword string `json:"hashed_password"`
+	RefreshToken   struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	} `json:"refresh_token"`
 }
 
 type DB struct {
@@ -29,6 +34,11 @@ type DB struct {
 type DBStructure struct {
 	Users  map[int]User  `json:"users"`
 	Chirps map[int]Chirp `json:"chirps"`
+}
+
+type RefreshToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func NewDB(path string) (*DB, error) {
@@ -148,8 +158,72 @@ func (db *DB) CreateUser(email string, password string) (User, error) {
 
 	return user, nil
 }
+func (db *DB) StoreRefreshToken(userId int, refreshToken string) (User, error) {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+
+	dbStructure, err := db.loadDB()
+	if err != nil {
+		return User{}, err
+	}
+
+	user, ok := dbStructure.Users[userId]
+	if !ok {
+		return User{}, errors.New("User does not exist")
+	}
+
+	user.RefreshToken.Token = refreshToken
+	user.RefreshToken.ExpiresAt = time.Now().UTC().AddDate(0, 0, 60)
+	dbStructure.Users[userId] = user
+	err = db.writeDB(dbStructure)
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
+
+func (db *DB) DeleteRefreshToken(refreshToken string) error {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+
+	dbStructure, err := db.loadDB()
+	if err != nil {
+		return err
+	}
+
+	user, _ := db.GetUserByValidRefreshToken(refreshToken)
+	user.RefreshToken.Token = ""
+	user.RefreshToken.ExpiresAt = time.Now()
+	dbStructure.Users[user.Id] = user
+	fmt.Println(dbStructure.Users[user.Id])
+	err = db.writeDB(dbStructure)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (db *DB) GetUserByValidRefreshToken(refreshToken string) (User, bool) {
+	dbStructure, err := db.loadDB()
+
+	if err != nil {
+		return User{}, false
+	}
+	currentTime := time.Now().UTC()
+	for _, user := range dbStructure.Users {
+		if user.RefreshToken.Token == refreshToken {
+			if user.RefreshToken.ExpiresAt.Before(currentTime) {
+				return User{}, false
+			}
+			return user, true
+		}
+	}
+	return User{}, false
+}
 
 func (db *DB) GetChirps() ([]Chirp, error) {
+
 	dbStructure, err := db.loadDB()
 	if err != nil {
 		return nil, err
