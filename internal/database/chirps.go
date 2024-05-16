@@ -1,15 +1,17 @@
 package database
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type Chirp struct {
-	Id   int    `json:"id"`
-	Body string `json:"body"`
+	AuthorId int    `json:"author_id"`
+	Id       int    `json:"id"`
+	Body     string `json:"body"`
 }
 
-func (db *DB) CreateChirp(body string) (Chirp, error) {
-	db.mux.Lock()
-	defer db.mux.Unlock()
+func (db *DB) CreateChirp(body string, userId int) (Chirp, error) {
 	dbStructure, err := db.loadDB()
 	if err != nil {
 		return Chirp{}, err
@@ -17,9 +19,11 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 
 	id := len(dbStructure.Chirps) + 1
 	chirp := Chirp{
-		Id:   id,
-		Body: body,
+		AuthorId: userId,
+		Id:       id,
+		Body:     body,
 	}
+	fmt.Println(chirp)
 	dbStructure.Chirps[id] = chirp
 
 	err = db.writeDB(dbStructure)
@@ -43,6 +47,20 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 	}
 
 	return chirps, nil
+}
+
+func (db *DB) DeleteChirp(chirpId int) error {
+
+	dbStructure, err := db.loadDB()
+	if err != nil {
+		return err
+	}
+
+	if _, ok := dbStructure.Chirps[chirpId]; !ok {
+		return errors.New("Chirp not found")
+	}
+	delete(dbStructure.Chirps, chirpId)
+	return nil
 }
 
 func (db *DB) GetChirp(Id int) (Chirp, error) {

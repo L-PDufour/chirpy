@@ -30,12 +30,12 @@ func (db *DB) StoreRefreshToken(userId int, token string) error {
 	return nil
 }
 
-func (db *DB) DeleteRefreshToken(refreshToken string) error {
+func (db *DB) DeleteRefreshToken(token string) error {
 	dbStructure, err := db.loadDB()
 	if err != nil {
 		return err
 	}
-	delete(dbStructure.RefreshTokens, refreshToken)
+	delete(dbStructure.RefreshTokens, token)
 	err = db.writeDB(dbStructure)
 	if err != nil {
 		return err

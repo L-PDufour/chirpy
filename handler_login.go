@@ -6,14 +6,12 @@ import (
 	"time"
 
 	"github.com/L-PDufour/chirpy/internal/auth"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Password         string `json:"password"`
-		Email            string `json:"email"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 	type response struct {
 		User
@@ -21,7 +19,6 @@ func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
 		RefreshToken string `json:"refresh_token"`
 	}
 	decoder := json.NewDecoder(r.Body)
-	defer r.Body.Close()
 
 	params := parameters{}
 	if err := decoder.Decode(&params); err != nil {
@@ -29,19 +26,15 @@ func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if params.Email == "" || params.Password == "" {
-		http.Error(w, "Email and password are required", http.StatusBadRequest)
+	user, err := cfg.DB.GetUserByEmail(params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get user")
 		return
 	}
 
-	user, err := cfg.DB.GetUserByEmail(params.Email)
+	err = auth.CheckPasswordHash(params.Password, user.HashedPassword)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusUnauthorized)
-		return
-	}
-	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(params.Password))
-	if err != nil {
-		http.Error(w, "Invalid password", http.StatusUnauthorized)
+		respondWithError(w, http.StatusUnauthorized, "Invalid password")
 		return
 	}
 
@@ -54,9 +47,16 @@ func (cfg *ApiConfig) handlerPostLogin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create access JWT")
 		return
 	}
-	refreshToken, _ := auth.GenerateRefreshToken()
+	refreshToken, err := auth.GenerateRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token")
+		return
+	}
 	err = cfg.DB.StoreRefreshToken(user.Id, refreshToken)
-
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save refresh token")
+		return
+	}
 	respondWithJSON(w, http.StatusOK, response{
 		User: User{
 			Id:    user.Id,

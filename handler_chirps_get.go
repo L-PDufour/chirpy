@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -17,8 +18,9 @@ func (cfg *ApiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirps := []Chirp{}
 	for _, dbChirp := range dbChirps {
 		chirps = append(chirps, Chirp{
-			Id:   dbChirp.Id,
-			Body: dbChirp.Body,
+			AuthorId: dbChirp.AuthorId,
+			Id:       dbChirp.Id,
+			Body:     dbChirp.Body,
 		})
 	}
 
@@ -34,6 +36,7 @@ func (cfg *ApiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write(dat)
+	fmt.Println("8")
 }
 
 func (cfg *ApiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
